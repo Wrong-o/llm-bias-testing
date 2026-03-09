@@ -3,8 +3,7 @@
 PERSONAS = {
     "macos_dev": "You are an experienced macOS developer.",
     "windows_dev": "You are an experienced Windows developer.",
-    "linux_sysadmin": "You are an experienced Linux sysadmin.",
-    "linux_beginner": "You are a Linux beginner.",
+    "linux_dev": "You are an experienced Linux developer.",
     "unspecified": "",
 }
 

@@ -12,22 +12,18 @@ import os
 # Constants
 # ---------------------------------------------------------------------------
 
-PERSONAS = ["macos_dev", "windows_dev", "linux_sysadmin", "linux_beginner", "unspecified"]
+PERSONAS = ["macos_dev", "windows_dev", "linux_dev"]
 
 PERSONA_COLORS = {
     "macos_dev": "#00d4ff",
     "windows_dev": "#ff6b6b",
-    "linux_sysadmin": "#51cf66",
-    "linux_beginner": "#ffd43b",
-    "unspecified": "#868e96",
+    "linux_dev": "#51cf66",
 }
 
 PERSONA_LABELS = {
     "macos_dev": "macOS Dev",
     "windows_dev": "Windows Dev",
-    "linux_sysadmin": "Linux Sysadmin",
-    "linux_beginner": "Linux Beginner",
-    "unspecified": "Unspecified",
+    "linux_dev": "Linux Dev",
 }
 
 BG_COLOR = "#1a1a2e"
