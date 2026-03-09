@@ -1,10 +1,9 @@
 """Use Mistral as a judge via async concurrent chat completions to rate responses on 6 dimensions."""
 
-import asyncio
 import json
 import os
 import re
-import warnings
+import time
 
 import pandas as pd
 from mistralai import Mistral
@@ -81,14 +80,8 @@ def extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-async def judge_one(
-    client: Mistral,
-    resp: dict,
-    semaphore: asyncio.Semaphore,
-    counter: dict,
-    total: int,
-) -> dict | None:
-    """Send a single judge request with retry and return a row dict or None."""
+def judge_one(client: Mistral, resp: dict, max_retries: int = 5) -> dict | None:
+    """Send a single judge request with retry. Returns a row dict or None."""
     custom_id = resp["custom_id"]
     persona, prompt_idx = parse_custom_id(custom_id)
     messages = [
@@ -99,16 +92,14 @@ async def judge_one(
         },
     ]
 
-    max_retries = 3
     for attempt in range(max_retries):
         try:
-            async with semaphore:
-                response = await client.chat.complete_async(
-                    model=MODEL,
-                    max_tokens=256,
-                    temperature=0,
-                    messages=messages,
-                )
+            response = client.chat.complete(
+                model=MODEL,
+                max_tokens=256,
+                temperature=0,
+                messages=messages,
+            )
             text = response.choices[0].message.content
             scores = extract_json(text)
             row = {
@@ -118,67 +109,50 @@ async def judge_one(
             }
             for dim in DIMENSIONS:
                 row[dim] = scores.get(dim)
-
-            counter["done"] += 1
-            if counter["done"] % 50 == 0:
-                print(f"  Progress: {counter['done']}/{total}")
-
             return row
 
         except (json.JSONDecodeError, AttributeError) as e:
-            warnings.warn(f"Failed to parse JSON for {custom_id}: {e}")
-            counter["done"] += 1
-            if counter["done"] % 50 == 0:
-                print(f"  Progress: {counter['done']}/{total}")
+            print(f"  [warn] JSON parse failed for {custom_id}: {e}")
             return None
 
         except Exception as e:
             if attempt < max_retries - 1:
-                error_str = str(e)
-                is_rate_limit = "429" in error_str or "RBAC" in error_str
-                backoff = (2 ** (attempt + 1)) * (5 if is_rate_limit else 1)
-                warnings.warn(
-                    f"Retry {attempt + 1}/{max_retries} for {custom_id}: {e} "
-                    f"(backoff {backoff}s)"
-                )
-                await asyncio.sleep(backoff)
+                backoff = 2 ** (attempt + 1)
+                print(f"  [retry] {custom_id} attempt {attempt + 1}/{max_retries}: {e} — waiting {backoff}s")
+                time.sleep(backoff)
             else:
-                warnings.warn(
-                    f"Failed after {max_retries} attempts for {custom_id}: {e}"
-                )
-                counter["done"] += 1
-                if counter["done"] % 50 == 0:
-                    print(f"  Progress: {counter['done']}/{total}")
+                print(f"  [error] {custom_id} failed after {max_retries} attempts: {e}")
                 return None
 
+    return None
 
-async def async_main() -> None:
+
+def main() -> None:
     print("Loading raw responses...")
     responses = load_responses(INPUT_PATH)
     print(f"  Loaded {len(responses)} responses")
 
     client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-    semaphore = asyncio.Semaphore(5)
-    counter = {"done": 0}
     total = len(responses)
 
-    print(f"Scoring {total} responses (concurrency=5)...")
-    tasks = [
-        judge_one(client, resp, semaphore, counter, total) for resp in responses
-    ]
-    results = await asyncio.gather(*tasks)
+    print(f"Scoring {total} responses sequentially...")
+    rows = []
+    errors = 0
+    for i, resp in enumerate(responses):
+        row = judge_one(client, resp)
+        if row is not None:
+            rows.append(row)
+        else:
+            errors += 1
+        if (i + 1) % 50 == 0:
+            print(f"  Progress: {i + 1}/{total} ({errors} errors)")
+        time.sleep(0.5)
 
-    rows = [r for r in results if r is not None]
-    errors = total - len(rows)
-    print(f"  Parsed {len(rows)} results ({errors} errors)")
+    print(f"  Done: {len(rows)} results ({errors} errors)")
 
     df = pd.DataFrame(rows)
     df.to_csv(OUTPUT_PATH, index=False)
     print(f"Wrote {OUTPUT_PATH} — {len(df)} rows × {len(df.columns)} columns")
-
-
-def main() -> None:
-    asyncio.run(async_main())
 
 
 if __name__ == "__main__":
